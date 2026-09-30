@@ -4,7 +4,7 @@ const $ = selector => document.querySelector(selector);
 const data = await fetch('./coordinates.json').then(response => { if (!response.ok) throw new Error('좌표 데이터를 읽지 못했습니다.'); return response.json(); });
 const graph = createGraph(data), frames = aStar(graph);
 const optimal = frames.at(-1).done ? frames.at(-1).current : null;
-const state = { path: ['S'], mode: 'manual', frame: 0, sort: 'f', showEdges: true, showCost: true, showCoordinates: true, hover: null, treeFit: false, zoom: { map: 1, tree: 1 } };
+const state = { path: ['S'], mode: 'astar', frame: 0, sort: 'f', showEdges: true, showCost: true, showCoordinates: true, hover: null, treeFit: false, zoom: { map: 1, tree: 1 } };
 const fmt = n => n.toFixed(2), natural = (a, b) => a.localeCompare(b, undefined, { numeric: true });
 const currentPath = () => state.mode === 'astar' ? frames[state.frame].current.path : state.path;
 const getCurrent = () => metrics(graph, currentPath());

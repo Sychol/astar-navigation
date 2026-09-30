@@ -15,12 +15,12 @@
   <main>
     <section class="status-strip" aria-label="현재 경로와 비용">
       <div class="status-main"><div class="path-summary"><span class="eyebrow">선택 경로</span><div id="breadcrumbs"></div></div><div class="metric"><span>g(n) <small>누적 이동 거리</small></span><strong id="current-g">0.00</strong></div><div class="metric"><span>h(n) <small>목표까지 직선거리</small></span><strong id="current-h">743.07</strong></div><div class="metric total"><span>f(n) = g(n) + h(n)</span><strong id="current-f">743.07</strong><small id="current-equation"></small></div></div>
-      <div class="status-mode"><div class="segmented" aria-label="탐색 모드"><button data-mode="manual" aria-pressed="true">직접 경로 선택</button><button data-mode="astar" aria-pressed="false">A* 최단경로 탐색</button></div><div class="tiny-metric">현재 깊이<strong id="depth">0</strong></div><div class="tiny-metric">목표 G<strong class="blue">(833, 375)</strong></div></div>
+      <div class="status-mode"><div class="segmented" aria-label="탐색 모드"><button data-mode="astar" aria-pressed="true">A* 최단경로 탐색</button><button data-mode="manual" aria-pressed="false">직접 경로 선택</button></div><div class="tiny-metric">현재 깊이<strong id="depth">0</strong></div><div class="tiny-metric">목표 G<strong class="blue">(833, 375)</strong></div></div>
     </section>
-    <div id="notice" class="notice" role="status">S에서 다음 노드를 선택해 탐색을 시작하세요.</div>
+    <div id="notice" class="notice" role="status">S를 확장했습니다. ‘다음 최소 f 확장’을 눌러 A* 탐색을 진행하세요.</div>
     <section class="search-guidance" aria-label="탐색 방식 안내">
-      <div><strong id="mode-heading">직접 경로 선택 · 최단경로 보장 없음</strong><p id="mode-guidance">이웃 최소 f만 선택하는 것은 A*가 아닙니다.</p></div>
-      <div class="guidance-actions"><button id="restart-astar" class="button" hidden>A* 처음부터</button><button id="optimal-path" class="button primary">A* 최단경로 보기</button></div>
+      <div><strong id="mode-heading">A* · 전체 OPEN에서 최소 f 확장</strong><p id="mode-guidance">전체 OPEN 후보를 비교하며 최단경로를 탐색합니다.</p></div>
+      <div class="guidance-actions"><button id="restart-astar" class="button">A* 처음부터</button><button id="optimal-path" class="button primary">A* 최단경로 보기</button></div>
     </section>
     <div id="route-comparison" class="route-comparison" hidden></div>
     <section class="visuals">
