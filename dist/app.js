@@ -1,22 +1,33 @@
-import { createGraph, metrics, candidates, treeWindow, aStar } from './core.js';
+import { createGraph, metrics, candidates, treeWindow, aStar, compareSearchNodes } from './core.js';
 
 const $ = selector => document.querySelector(selector);
 const data = await fetch('./coordinates.json').then(response => { if (!response.ok) throw new Error('좌표 데이터를 읽지 못했습니다.'); return response.json(); });
 const graph = createGraph(data), frames = aStar(graph);
+const optimal = frames.at(-1).done ? frames.at(-1).current : null;
 const state = { path: ['S'], mode: 'manual', frame: 0, sort: 'f', showEdges: true, showCost: true, showCoordinates: true, hover: null, treeFit: false, zoom: { map: 1, tree: 1 } };
 const fmt = n => n.toFixed(2), natural = (a, b) => a.localeCompare(b, undefined, { numeric: true });
 const currentPath = () => state.mode === 'astar' ? frames[state.frame].current.path : state.path;
 const getCurrent = () => metrics(graph, currentPath());
-const getCandidates = () => candidates(graph, currentPath());
+const getCandidates = () => state.mode === 'manual' ? candidates(graph, currentPath()) : frames[state.frame].updates.slice();
+const getMapCandidates = () => state.mode === 'manual' ? getCandidates() : frames[state.frame].done ? [] : frames[state.frame].open;
+const nextExpansion = () => state.mode === 'astar' && !frames[state.frame].done ? frames[state.frame].open[0] : null;
+const highlightedId = () => state.mode === 'manual' ? getCandidates()[0]?.id : nextExpansion()?.id;
+const minimumLabel = () => state.mode === 'manual' ? '이웃 최소 f' : '다음 확장';
 const point = id => ({ x: graph.points[id].x + 60, y: 480 - graph.points[id].y });
 const escape = value => String(value).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 function announce(message, success = false) { $('#notice').textContent = message; $('#notice').classList.toggle('success', success); }
+function goalMessage() {
+  const current = getCurrent();
+  if (state.mode === 'astar') return `A* 최단경로 확정 · 총 거리 ${fmt(current.g)} · ${state.frame + 1}회 확장`;
+  const extra = current.g - optimal.g;
+  return `직접 선택 경로 ${fmt(current.g)} · A* 최단거리 ${fmt(optimal.g)} · ${extra > 1e-8 ? `${fmt(extra)}만큼 더 깁니다.` : '최단거리와 같습니다.'}`;
+}
 function selectNode(id) {
   if (state.mode !== 'manual') return false;
   const choice = getCandidates().find(candidate => candidate.id === id);
   if (!choice) return false;
   state.path.push(id); state.hover = null; render();
-  announce(id === 'G' ? `목표 G에 도착했습니다. 총 이동 거리 ${fmt(choice.g)}입니다.` : `${id}를 선택했습니다. 다음으로 이동할 수 있는 후보를 비교해 보세요.`, id === 'G');
+  announce(id === 'G' ? goalMessage() : `${id}를 선택했습니다. 이웃 최소 f는 최적 이동을 보장하지 않습니다.`, id === 'G');
   return true;
 }
 function rewind(index) {
@@ -34,11 +45,15 @@ function stepAStar() {
   announce(frame.done ? `A*가 최단경로를 찾았습니다. 총 거리 ${fmt(frame.current.g)}, ${frames.length}회 확장입니다.` : `${frame.current.id}를 확장했습니다. 다음 확장은 전체 OPEN 후보의 최소 f를 기준으로 합니다.`, frame.done);
   return true;
 }
+function showOptimalPath() {
+  state.mode = 'astar'; state.frame = frames.length - 1; state.hover = null;
+  render(); announce(goalMessage(), true);
+}
 function costText(c, x, y, fontSize = 12) {
   return `<text x="${x}" y="${y}" class="cost-label" font-size="${fontSize}"><tspan font-weight="700" fill="#1b355b">${fmt(c.f)}</tspan><tspan fill="#8090a7"> ≈ </tspan><tspan fill="#245be5">${fmt(c.g)}</tspan><tspan fill="#8090a7"> + </tspan><tspan fill="#078f84">${fmt(c.h)}</tspan></text>`;
 }
 function renderMap() {
-  const svg = $('#map'), path = currentPath(), current = path.at(-1), list = getCandidates(), candidateIds = new Set(list.map(c => c.id));
+  const svg = $('#map'), path = currentPath(), current = path.at(-1), list = getMapCandidates(), candidateIds = new Set(list.map(c => c.id)), best = highlightedId();
   svg.setAttribute('viewBox', '0 0 1120 550');
   svg.style.width = `${state.zoom.map * 100}%`; svg.style.height = `${state.zoom.map * 100}%`; svg.style.minWidth = '0';
   let html = `<defs><marker id="map-arrow" markerWidth="6" markerHeight="6" refX="4.4" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0 0 5 3 0 6" fill="#245be5"/></marker></defs><rect x="60" y="70" width="1000" height="410" fill="#fbfdff"/>`;
@@ -46,7 +61,7 @@ function renderMap() {
   for (let y = 0; y <= 410; y += 10) html += `<line x1="60" y1="${480-y}" x2="1060" y2="${480-y}" stroke="${y%50 ? '#eff3f8' : '#dde6f1'}" stroke-width=".7"/>${y%50 ? '' : `<text x="48" y="${484-y}" text-anchor="end" class="axis-label">${y}</text>`}`;
   if (state.showEdges) for (const e of graph.edges) { const a=point(e.a), b=point(e.b); html += `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" class="all-edge"/>`; }
   for (const group of graph.obstacles) html += `<polygon points="${group.map(id => { const p=point(id); return `${p.x},${p.y}`; }).join(' ')}" class="map-obstacle"/>`;
-  for (const candidate of list) { const a=point(current), b=point(candidate.id); html += `<line data-edge-node="${candidate.id}" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" class="next-edge"/>`; }
+  for (const candidate of list) { const a=point(candidate.path.at(-2)), b=point(candidate.id); html += `<line data-edge-node="${candidate.id}" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" class="next-edge"/>`; }
   for (let i=1;i<path.length;i++) { const a=point(path[i-1]), b=point(path[i]); const dx=b.x-a.x,dy=b.y-a.y,d=Math.hypot(dx,dy); html += `<line x1="${a.x}" y1="${a.y}" x2="${b.x-dx*10/d}" y2="${b.y-dy*10/d}" class="path-edge" marker-end="url(#map-arrow)"/>`; }
   html += `<path d="M60 62V480H1070" fill="none" stroke="#607087" stroke-width="1.2"/><text x="1077" y="484" class="node-id">x</text><text x="56" y="55" class="node-id">y</text>`;
   const offsets = { O1:[-9,18], O2:[-15,-12], O3:[-19,-11], O4:[6,17], O5:[-24,5], O6:[-27,5], O7:[5,-8], O8:[7,-5], O9:[-29,4], O10:[-22,19], O11:[-10,-12], O12:[3,18], O13:[5,17], O14:[-18,-10], O15:[4,-10], O16:[5,0], O17:[-20,-10], O18:[6,18], O19:[8,3], O20:[8,-8], O21:[6,17], O22:[-31,17], O23:[-31,-10], O24:[5,17], O25:[5,-8], O26:[-17,19], O27:[-31,-8], O28:[-31,18], O29:[5,-10], O30:[8,0], O31:[-33,1], O32:[-17,-10], O33:[7,4], S:[-26,-11], G:[11,-4] };
@@ -65,23 +80,23 @@ function renderMap() {
     for (const candidate of list) {
       const p=point(candidate.id);
       const offsets=[[16,-66],[16,18],[-width-16,-66],[-width-16,18],[20,-132],[-width-20,-132],[20,82],[-width-20,82],[115,-30],[-width-100,-30],[20,138],[-width-20,138]];
-      let best=null;
+      let bestPosition=null;
       for (const [dx,dy] of offsets) {
         const x=Math.max(66,Math.min(1050-width,p.x+dx)),y=Math.max(12,Math.min(518-height,p.y+dy));
         let score=Math.hypot(x+width/2-p.x,y+height/2-p.y)*.5;
         for (const box of occupied) score += Math.max(0,Math.min(x+width,box.x+width)-Math.max(x,box.x))*Math.max(0,Math.min(y+height,box.y+height)-Math.max(y,box.y))*50;
         for (const id of [...candidateIds,current,'G','S']) { const q=point(id); if(q.x>x-8&&q.x<x+width+8&&q.y>y-8&&q.y<y+height+8) score+=18000; }
-        if(!best||score<best.score) best={x,y,score};
+        if(!bestPosition||score<bestPosition.score) bestPosition={x,y,score};
       }
-      occupied.push(best); const {x,y}=best;
-      html += `<g class="cost-label ${state.mode==='manual'?'selectable':''}" data-node="${candidate.id}"><line x1="${p.x}" y1="${p.y}" x2="${Math.max(x,Math.min(x+width,p.x))}" y2="${Math.max(y,Math.min(y+height,p.y))}" stroke="#afbed2" stroke-width=".8"/><rect x="${x}" y="${y}" width="${width}" height="${height}" rx="6" class="cost-card ${candidate===list[0]?'best':''}"/><text x="${x+10}" y="${y+18}" class="node-title" fill="#233e62">${candidate.id}</text>${candidate===list[0]?`<text x="${x+width-10}" y="${y+18}" font-size="10" text-anchor="end" fill="#078f84">최소 f</text>`:''}${costText(candidate,x+10,y+36)}</g>`;
+      occupied.push(bestPosition); const {x,y}=bestPosition;
+      html += `<g class="cost-label ${state.mode==='manual'?'selectable':''}" data-node="${candidate.id}"><line x1="${p.x}" y1="${p.y}" x2="${Math.max(x,Math.min(x+width,p.x))}" y2="${Math.max(y,Math.min(y+height,p.y))}" stroke="#afbed2" stroke-width=".8"/><rect x="${x}" y="${y}" width="${width}" height="${height}" rx="6" class="cost-card ${candidate.id===best?'best':''}"/><text x="${x+10}" y="${y+18}" class="node-title" fill="#233e62">${candidate.id}</text>${candidate.id===best?`<text x="${x+width-10}" y="${y+18}" font-size="10" text-anchor="end" fill="#078f84">${minimumLabel()}</text>`:''}${costText(candidate,x+10,y+36)}</g>`;
     }
   }
   svg.innerHTML=html;
-  $('#map-status').textContent=current==='G'?'목표 도착 · h(G) = 0':state.mode==='manual'?'청록색 노드 또는 후보 표에서 다음 이동을 선택하세요.':'파란 경로는 현재 확장 노드까지의 최선 경로입니다.';
+  $('#map-status').textContent=current==='G'?'목표 도착 · h(G) = 0':state.mode==='manual'?'청록색 이웃 중 직접 이동 · 최소 f가 최적 이동을 보장하지 않음':'청록: OPEN 노드의 최선 부모 연결 · 파랑: 현재 확장 노드까지의 경로';
 }
 function renderTree() {
-  const path=currentPath(),window=treeWindow(path), list=getCandidates().sort((a,b)=>natural(a.id,b.id)), best=getCandidates()[0]?.id;
+  const path=currentPath(),window=treeWindow(path), list=getCandidates().sort((a,b)=>natural(a.id,b.id)), best=highlightedId();
   const W=Math.max(760,list.length*127+110), H=520, cx=W/2, top=72, middle=228, bottom=390;
   const svg=$('#tree');svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.style.width=`${(state.treeFit ? $('#tree-viewport').clientWidth : Math.max($('#tree-viewport').clientWidth, list.length*125+100))*state.zoom.tree}px`;svg.style.height=`${state.zoom.tree*100}%`;svg.style.minWidth='0';
   svg.dataset.topDepth=window.levels[0]??'none';svg.dataset.currentDepth=window.levels[1];svg.dataset.bottomDepth=window.levels[2];
@@ -89,7 +104,7 @@ function renderTree() {
   for(const y of [top,middle,bottom]) html+=`<line x1="22" y1="${y}" x2="${W-22}" y2="${y}" stroke="#ebf0f6" stroke-width="1"/>`;
   const node=(id,x,y,type,depth)=>{
     const p=graph.points[id], selected=type==='current', candidate=type==='candidate', parent=type==='parent';
-    return `<g data-node="${id}" ${parent?`data-rewind="${path.length-2}" role="button" tabindex="0" aria-label="부모 ${id}로 돌아가기"`:candidate&&state.mode==='manual'?`role="button" tabindex="0" aria-label="${id} 선택"`:''} class="svg-node ${(candidate||parent)&&state.mode==='manual'?'selectable':''}">${selected?`<circle cx="${x}" cy="${y}" r="37" fill="#245be50d"/>`:''}<circle cx="${x}" cy="${y}" r="${selected?31:24}" fill="${selected?'#245be5':parent?'#eef3ff':'white'}" stroke="${candidate?'#099f92':selected?'#245be5':'#a4b5cd'}" stroke-width="${candidate?2:1.5}"/><text x="${x}" y="${y}" text-anchor="middle"></text><text x="${x}" y="${y+(selected&&state.showCoordinates?-1:5)}" text-anchor="middle" font-size="${selected?18:16}" font-weight="700" fill="${selected?'white':'#294363'}">${id}</text>${selected&&state.showCoordinates?`<text x="${x}" y="${y+15}" text-anchor="middle" font-size="10" fill="#eef4ff">(${p.x}, ${p.y})</text>`:''}</g>`;
+    return `<g data-node="${id}" ${parent&&state.mode==='manual'?`data-rewind="${path.length-2}" role="button" tabindex="0" aria-label="부모 ${id}로 돌아가기"`:candidate&&state.mode==='manual'?`role="button" tabindex="0" aria-label="${id} 선택"`:''} class="svg-node ${(candidate||parent)&&state.mode==='manual'?'selectable':''}">${selected?`<circle cx="${x}" cy="${y}" r="37" fill="#245be50d"/>`:''}<circle cx="${x}" cy="${y}" r="${selected?31:24}" fill="${selected?'#245be5':parent?'#eef3ff':'white'}" stroke="${candidate?'#099f92':selected?'#245be5':'#a4b5cd'}" stroke-width="${candidate?2:1.5}"/><text x="${x}" y="${y}" text-anchor="middle"></text><text x="${x}" y="${y+(selected&&state.showCoordinates?-1:5)}" text-anchor="middle" font-size="${selected?18:16}" font-weight="700" fill="${selected?'white':'#294363'}">${id}</text>${selected&&state.showCoordinates?`<text x="${x}" y="${y+15}" text-anchor="middle" font-size="10" fill="#eef4ff">(${p.x}, ${p.y})</text>`:''}</g>`;
   };
   if(window.parent) {html+=`<line x1="${cx}" y1="${top+25}" x2="${cx}" y2="${middle-31}" class="path-edge"/>`;html+=node(window.parent,cx,top,'parent',window.levels[0]);html+=`<text x="${cx-42}" y="${top+4}" text-anchor="end" class="tree-label">부모</text>`;} else html+=`<text x="${cx}" y="${top+4}" text-anchor="middle" class="tree-label">이전 노드 없음</text>`;
   const start=(W-(list.length-1)*127)/2;
@@ -98,25 +113,44 @@ function renderTree() {
   html+=`<text x="${cx+43}" y="${middle+4}" class="tree-label" fill="#245be5">현재</text>`;
   for(let i=0;i<list.length;i++) {
     const c=list[i],x=start+i*127;html+=node(c.id,x,bottom,'candidate',window.levels[2]);
-    if(state.showCost) html+=`<g data-node="${c.id}"><rect x="${x-58}" y="${bottom+32}" width="116" height="58" rx="6" class="cost-card ${c.id===best?'best':''}"/><text x="${x}" y="${bottom+51}" text-anchor="middle" class="cost-label" font-weight="700" fill="#223d64">${fmt(c.f)}</text><text x="${x}" y="${bottom+69}" text-anchor="middle" class="cost-label" fill="#58708f">≈ ${fmt(c.g)} +</text><text x="${x}" y="${bottom+84}" text-anchor="middle" class="cost-label" fill="#078f84">${fmt(c.h)}</text>${c.id===best?`<rect x="${x-27}" y="${bottom+93}" width="54" height="20" rx="4" fill="#0b9e90"/><text x="${x}" y="${bottom+107}" text-anchor="middle" font-size="10" fill="white">최소 f</text>`:''}</g>`;
+    if(state.showCost) html+=`<g data-node="${c.id}"><rect x="${x-58}" y="${bottom+32}" width="116" height="58" rx="6" class="cost-card ${c.id===best?'best':''}"/><text x="${x}" y="${bottom+51}" text-anchor="middle" class="cost-label" font-weight="700" fill="#223d64">${fmt(c.f)}</text><text x="${x}" y="${bottom+69}" text-anchor="middle" class="cost-label" fill="#58708f">≈ ${fmt(c.g)} +</text><text x="${x}" y="${bottom+84}" text-anchor="middle" class="cost-label" fill="#078f84">${fmt(c.h)}</text>${c.id===best?`<rect x="${x-27}" y="${bottom+93}" width="54" height="20" rx="4" fill="#0b9e90"/><text x="${x}" y="${bottom+107}" text-anchor="middle" font-size="10" fill="white">${minimumLabel()}</text>`:''}</g>`;
   }
-  if(!list.length) html+=`<text x="${cx}" y="${bottom}" text-anchor="middle" font-size="17" fill="#078f84">${window.current==='G'?'목표 G 도착 · h(G) = 0':'새로운 이동 후보가 없습니다.'}</text><text x="${cx}" y="${bottom+28}" text-anchor="middle" class="tree-label">${window.current==='G'?'현재 경로의 총 거리를 확인하세요.':'부모 노드나 이동 이력으로 돌아갈 수 있습니다.'}</text>`;
+  if(!list.length) html+=`<text x="${cx}" y="${bottom}" text-anchor="middle" font-size="17" fill="#078f84">${window.current==='G'?'목표 G 도착 · h(G) = 0':state.mode==='astar'?'이번 확장에서 갱신한 자식이 없습니다.':'새로운 이동 후보가 없습니다.'}</text><text x="${cx}" y="${bottom+28}" text-anchor="middle" class="tree-label">${window.current==='G'?'현재 경로의 총 거리를 확인하세요.':state.mode==='astar'?'다음 확장은 전체 OPEN 후보에서 선택합니다.':'부모 노드나 이동 이력으로 돌아갈 수 있습니다.'}</text>`;
   for(const [i,y] of [top,middle,bottom-48].entries()) {
     const x=i===2?cx:cx+114;
     html+=`<rect x="${x-40}" y="${y-13}" width="80" height="25" rx="6" fill="#f5f8fd"/><text x="${x}" y="${y+4}" text-anchor="middle" class="tree-label">${window.levels[i]===null?'시작':'Depth '+window.levels[i]}</text>`;
   }
   svg.innerHTML=html;
-  $('#tree-range').textContent=window.parent?`표시 깊이 ${window.levels[0]}–${window.levels[2]} · 선택에 따라 이동`:'시작 S · 다음 깊이 1 후보';
-  $('#tree-count').textContent=`다음 후보 ${list.length}개`;
+  $('#tree-range').textContent=(window.parent?`표시 깊이 ${window.levels[0]}–${window.levels[2]}`:'시작 S · 다음 깊이 1')+(state.mode==='astar'?' · 이번 확장에서 갱신한 가지':' · 선택에 따라 이동');
+  $('#tree-count').textContent=state.mode==='astar'?`이번 갱신 ${list.length}개`:`다음 후보 ${list.length}개`;
+  $('#tree-kind').textContent=state.mode==='astar'?'부모 · 확장 노드 · 갱신한 자식':'부모 · 현재 · 다음 후보';
 }
 function renderTable() {
   const list=state.mode==='astar'?frames[state.frame].open.slice():getCandidates();
-  const best=list.slice().sort((a,b)=>a.f-b.f)[0]?.id;
-  list.sort((a,b)=>state.sort==='id'?natural(a.id,b.id):a[state.sort]-b[state.sort]||natural(a.id,b.id));
+  const best=highlightedId();
+  list.sort((a,b)=>state.sort==='id'?natural(a.id,b.id):a[state.sort]-b[state.sort]||(state.mode==='astar'?compareSearchNodes(a,b):natural(a.id,b.id)));
   $('#candidate-count').textContent=`${list.length}개 후보`;
   $('#candidate-title').textContent=state.mode==='astar'?(frames[state.frame].done?'탐색 종료 · 잔여 OPEN':'전체 OPEN 후보'):'다음 노드 비교';
-  $('#candidate-body').innerHTML=list.length?list.map(c=>`<tr data-node="${c.id}" class="${c.id===best?'best':''}"><td>${c.id}</td><td>${fmt(c.g)}</td><td>${fmt(c.h)}</td><td>${fmt(c.f)}</td><td class="row-note">${c.id===best?(state.mode==='astar'?'다음 확장 · 최소 f':'현재 후보 중 최소 f'):'—'}</td><td>${state.mode==='manual'?`<button class="select-node" data-select="${c.id}" aria-label="표에서 ${c.id} 선택">선택</button>`:c.id===best&&!frames[state.frame].done?'<button class="select-node" data-astar-step>확장</button>':'—'}</td></tr>`).join(''):`<tr><td colspan="6" class="empty-row">${getCurrent().id==='G'?'목표에 도착했습니다. 경로를 저장하거나 다시 시작해 보세요.':'이동할 새 후보가 없습니다. 이전 단계로 돌아가 보세요.'}</td></tr>`;
-  $('#table-note').textContent=state.mode==='astar'?'전체 OPEN 집합에서 f가 가장 작은 노드를 확장합니다.':'현재 후보 중 최소 f는 전체 최단경로를 보장하지 않습니다.';
+  $('#candidate-body').innerHTML=list.length?list.map(c=>`<tr data-node="${c.id}" class="${c.id===best?'best':''}"><td>${c.id}</td><td>${fmt(c.g)}</td><td>${fmt(c.h)}</td><td>${fmt(c.f)}</td><td class="row-note">${c.id===best?(state.mode==='astar'?'다음 확장 · 최소 f':'이웃 최소 f · 최적 보장 없음'):'—'}</td><td>${state.mode==='manual'?`<button class="select-node" data-select="${c.id}" aria-label="표에서 ${c.id} 선택">선택</button>`:c.id===best&&!frames[state.frame].done?'<button class="select-node" data-astar-step>확장</button>':'—'}</td></tr>`).join(''):`<tr><td colspan="6" class="empty-row">${getCurrent().id==='G'?'목표에 도착했습니다. 경로를 저장하거나 다시 시작해 보세요.':'이동할 새 후보가 없습니다. 이전 단계로 돌아가 보세요.'}</td></tr>`;
+  $('#table-note').textContent=state.mode==='astar'?'전체 OPEN에서 f → h → 노드 번호 순으로 확장합니다. 확장 순서는 이동 경로가 아닙니다.':'이웃 최소 f = 이웃 중 추정 총비용이 가장 작음. 실제 최단 이동의 추천은 아닙니다.';
+}
+function renderGuidance() {
+  const current = getCurrent(), isAStar = state.mode === 'astar', next = nextExpansion();
+  $('#mode-heading').textContent=isAStar?'A* · 전체 OPEN에서 최소 f 확장':'직접 경로 선택 · 최단경로 보장 없음';
+  $('#mode-guidance').textContent=isAStar
+    ? frames[state.frame].done?'목표 G를 OPEN에서 꺼낸 뒤 부모 연결로 복원한 최단경로입니다.'
+      : `다음 확장: ${next?.id ?? '없음'}. 이전에 발견한 후보도 계속 비교합니다. 확장 노드를 순서대로 잇지 않습니다.`
+    : '이웃 최소 f만 계속 선택하는 것은 A*가 아닙니다. h는 직선거리 추정이므로, 실제로 더 돌아갈 수 있습니다.';
+  $('#optimal-path').disabled=isAStar&&frames[state.frame].done;
+  $('#restart-astar').hidden=!isAStar;
+  $('#expansion-history').hidden=!isAStar;
+  $('#expansion-history').textContent=isAStar?`확장 순서 (이동 경로 아님): ${frames.slice(0,state.frame+1).map(frame=>frame.current.id).join(' → ')}`:'';
+  const finished=current.id==='G', extra=current.g-optimal.g;
+  $('#route-comparison').hidden=!finished;
+  $('#route-comparison').textContent=finished?`${isAStar?'A* 경로':'직접 선택 경로'} ${fmt(current.g)} · 최단거리 ${fmt(optimal.g)} · 차이 ${extra>1e-8?`+${fmt(extra)} (${fmt(extra/optimal.g*100)}%)`:'0.00'} | 최적 경로: ${optimal.path.join(' → ')}`:'';
+  $('#legend-path').textContent=isAStar?'현재 최선 경로':'지나온 경로';
+  $('#legend-next').textContent=isAStar?'OPEN의 부모 연결':'다음 이동 후보';
+  $('#legend-candidate').textContent=isAStar?'OPEN 후보':'선택 가능';
 }
 function render() {
   const path=currentPath(),c=getCurrent(),goal=c.id==='G';
@@ -126,13 +160,13 @@ function render() {
   $('#undo').disabled=state.mode==='astar'?state.frame===0:path.length===1;
   $('#astar-step').hidden=state.mode!=='astar';$('#astar-step').disabled=state.frame===frames.length-1;
   $('#mode-badge').textContent=state.mode==='astar'?`A* · ${state.frame+1}회 확장`:'직접 선택';
-  $('#mode-note').textContent=state.mode==='astar'?'A*는 전체 OPEN에서 최소 f를 선택합니다. 파란 경로는 현재 확장 노드까지의 최선 경로이며, 확장 순서 자체는 이동 경로가 아닙니다.':'같은 꼭짓점도 경로에 따라 g와 f는 달라집니다. 이미 지나온 노드는 제외하며, 되돌리기로 경로를 수정할 수 있습니다.';
+  $('#mode-note').textContent=state.mode==='astar'?'더 작은 g로 도달할 때만 비용과 부모를 갱신합니다. 지도와 표는 동일한 OPEN 값을 사용하며, 트리 하단은 이번 확장에서 갱신한 자식입니다.':'이웃 최소 f를 따라가도 최단경로가 아닐 수 있습니다. 같은 꼭짓점의 h는 같아도 선택 경로에 따라 g와 f는 달라집니다.';
   $('#visited-count').textContent=state.mode==='astar'?`CLOSED ${frames[state.frame].closed.length}개`:`방문 ${path.length}개`;
   $('#open-count').textContent=state.mode==='astar'?`OPEN ${frames[state.frame].open.length}개`:`다음 후보 ${getCandidates().length}개`;
   document.querySelectorAll('[data-mode]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.mode===state.mode)));
-  renderMap();renderTree();renderTable();
+  renderMap();renderTree();renderTable();renderGuidance();
   requestAnimationFrame(()=>{const viewport=$('#tree-viewport');viewport.scrollLeft=Math.max(0,(viewport.scrollWidth-viewport.clientWidth)/2);});
-  if(goal)announce(`목표 G에 도착했습니다. 총 이동 거리 ${fmt(c.g)}입니다.`,true);
+  if(goal)announce(goalMessage(),true);
   $('#node-tooltip').hidden=true;
 }
 document.addEventListener('click',event=>{
@@ -146,7 +180,9 @@ document.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===
 $('#undo').addEventListener('click',()=>{if(state.mode==='astar'){if(state.frame>0){state.frame--;render();announce('이전 A* 확장 상태로 돌아왔습니다.');}}else rewind(state.path.length-2);});
 $('#reset').addEventListener('click',reset);
 $('#astar-step').addEventListener('click',stepAStar);
-function setMode(mode) { if (!['manual','astar'].includes(mode)) throw new Error('유효하지 않은 모드입니다.'); state.mode=mode;state.hover=null;render();announce(state.mode==='astar'?'A* 비교: 전체 OPEN 후보에서 최소 f를 하나씩 확장합니다.':'직접 선택: 청록색 노드를 선택해 경로를 이어 가세요.'); }
+$('#optimal-path').addEventListener('click',showOptimalPath);
+$('#restart-astar').addEventListener('click',()=>{state.mode='astar';state.frame=0;render();announce('A*를 S부터 다시 시작했습니다. 전체 OPEN 후보를 비교하세요.');});
+function setMode(mode) { if (!['manual','astar'].includes(mode)) throw new Error('유효하지 않은 모드입니다.'); state.mode=mode;state.hover=null;render();announce(getCurrent().id==='G'?goalMessage():state.mode==='astar'?'A*: 전체 OPEN 후보의 최소 f를 확장합니다. 확장 순서와 실제 경로는 다릅니다.':'직접 선택: 이웃 최소 f는 최적 이동을 보장하지 않습니다.',getCurrent().id==='G'); }
 document.querySelectorAll('[data-mode]').forEach(button=>button.addEventListener('click',()=>setMode(button.dataset.mode)));
 $('#sort').addEventListener('change',event=>{state.sort=event.target.value;renderTable();});
 for(const [selector,property] of [['#show-edges','showEdges'],['#show-cost','showCost'],['#show-coordinates','showCoordinates']]) $(selector).addEventListener('change',event=>{state[property]=event.target.checked;renderMap();renderTree();});
@@ -183,9 +219,9 @@ async function exportImage() {
   try {
     const c=getCurrent(),list=(state.mode==='astar'?frames[state.frame].open:getCandidates()), map=styledSVG($('#map')),tree=styledSVG($('#tree'));
     const H=Math.max(1160,880+list.length*31),W=2400;
-    let source=`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><rect width="100%" height="100%" fill="#f5f8fc"/><g font-family="Malgun Gothic,Arial,sans-serif" fill="#17243c"><text x="45" y="58" font-size="30" font-weight="700">A* 경로 탐색 실습</text><text x="45" y="105" font-size="23">${escape(currentPath().join(' → '))}   |   g ${fmt(c.g)}   h ${fmt(c.h)}   f ${fmt(c.f)}</text><text x="45" y="146" font-size="17" fill="#687c99">${state.mode==='manual'?'직접 선택':'A* 비교'} · 깊이 ${c.depth} · f(n) = g(n) + h(n)</text><rect x="30" y="175" width="1260" height="605" rx="14" fill="white"/><rect x="1310" y="175" width="1060" height="605" rx="14" fill="white"/><svg x="40" y="184" width="1240" height="585">${map}</svg><svg x="1320" y="184" width="1040" height="585">${tree}</svg><text x="45" y="828" font-size="21" font-weight="700">${state.mode==='manual'?'다음 이동 후보':'전체 OPEN 후보'} · f ≈ g + h</text>`;
+    let source=`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><rect width="100%" height="100%" fill="#f5f8fc"/><g font-family="Malgun Gothic,Arial,sans-serif" fill="#17243c"><text x="45" y="58" font-size="30" font-weight="700">A* 경로 탐색 실습</text><text x="45" y="105" font-size="23">${escape(currentPath().join(' → '))}   |   g ${fmt(c.g)}   h ${fmt(c.h)}   f ${fmt(c.f)}</text><text x="45" y="146" font-size="17" fill="#687c99">${state.mode==='manual'?'직접 선택 (최단경로 보장 없음)':frames[state.frame].done?'A* 최단경로 확정':'A* 탐색 중 (확장 순서는 이동 경로 아님)'} · 깊이 ${c.depth} · f(n) = g(n) + h(n)</text><text x="45" y="167" font-size="15" fill="#245be5">${c.id==='G'?escape(goalMessage()):state.mode==='manual'?'이웃 최소 f는 이웃 사이의 추정치 비교입니다. 실제 최단경로는 A*로 확인하세요.':`다음 확장: ${nextExpansion()?.id??'없음'} · 전체 OPEN에서 선택 · 부모 연결로 이동 경로 복원`}</text><rect x="30" y="175" width="1260" height="605" rx="14" fill="white"/><rect x="1310" y="175" width="1060" height="605" rx="14" fill="white"/><svg x="40" y="184" width="1240" height="585">${map}</svg><svg x="1320" y="184" width="1040" height="585">${tree}</svg><text x="45" y="828" font-size="21" font-weight="700">${state.mode==='manual'?'다음 이동 후보':'전체 OPEN 후보'} · f ≈ g + h</text>`;
     list.forEach((item,i)=>{source+=`<text x="45" y="${867+i*31}" font-size="20">${item.id}     ${fmt(item.f)} ≈ ${fmt(item.g)} + ${fmt(item.h)}</text>`;});
-    source+='<text x="1325" y="832" font-size="20" fill="#245be5">진한 파랑: 선택 경로</text><text x="1325" y="868" font-size="20" fill="#078f84">청록: 다음 이동 후보</text><text x="1325" y="904" font-size="20" fill="#687c99">회색: 전체 이동 가능 연결</text><text x="1325" y="957" font-size="17" fill="#687c99">장애물 내부 통과 금지 · 경계 이동 허용</text><text x="1325" y="989" font-size="17" fill="#687c99">Figure 3.31의 비율을 기준으로 재구성한 좌표</text></g></svg>';
+    source+=`<text x="1325" y="832" font-size="20" fill="#245be5">진한 파랑: ${state.mode==='manual'?'직접 선택 경로':'현재 확장 노드까지의 최선 경로'}</text><text x="1325" y="868" font-size="20" fill="#078f84">청록: ${state.mode==='manual'?'다음 이동 후보':'OPEN의 부모 연결'}</text><text x="1325" y="904" font-size="20" fill="#687c99">회색: 전체 이동 가능 연결</text><text x="1325" y="957" font-size="17" fill="#687c99">장애물 내부 통과 금지 · 경계 이동 허용</text><text x="1325" y="989" font-size="17" fill="#687c99">Figure 3.31의 비율을 기준으로 재구성한 좌표</text><text x="1325" y="1030" font-size="17" fill="#245be5">${c.id==='G'?`A* 최단거리 ${fmt(optimal.g)} · 선택 경로와 차이 ${fmt(c.g-optimal.g)}`:state.mode==='manual'?'이웃 최소 f는 실제 최단 이동을 보장하지 않습니다.':'확장 순서를 이어붙이지 않고 부모 연결을 복원합니다.'}</text></g></svg>`;
     const url=URL.createObjectURL(new Blob([source],{type:'image/svg+xml;charset=utf-8'}));
     try {
       const image=new Image(); await new Promise((resolve,reject)=>{image.onload=resolve;image.onerror=()=>reject(new Error('이미지 변환 실패'));image.src=url;});
@@ -202,7 +238,7 @@ $('#export-dialog').addEventListener('click',event=>{if(event.target===$('#expor
 const resize=new ResizeObserver(()=>renderTree());resize.observe($('#tree-viewport'));
 
 function stateSummary() {
-  return { mode:state.mode,path:[...currentPath()],current:getCurrent(),tree:treeWindow(currentPath()),candidates:getCandidates(),astar:{step:state.frame,finished:frames[state.frame].done} };
+  return { mode:state.mode,path:[...currentPath()],current:getCurrent(),tree:treeWindow(currentPath()),candidates:getCandidates(),frontier:frames[state.frame].open,nextExpansion:nextExpansion()?.id??null,optimal,astar:{step:state.frame,finished:frames[state.frame].done,expansionOrder:frames.slice(0,state.frame+1).map(frame=>frame.current.id)} };
 }
 function registerTools() {
   const context=document.modelContext;if(!context?.registerTool)return;
