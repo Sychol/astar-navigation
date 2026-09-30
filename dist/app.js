@@ -9,6 +9,7 @@ const fmt = n => n.toFixed(2), natural = (a, b) => a.localeCompare(b, undefined,
 const currentPath = () => state.mode === 'astar' ? frames[state.frame].current.path : state.path;
 const getCurrent = () => metrics(graph, currentPath());
 const getCandidates = () => state.mode === 'manual' ? candidates(graph, currentPath()) : frames[state.frame].updates.slice();
+const getSiblings = () => currentPath().length < 2 ? [] : candidates(graph, currentPath().slice(0, -1)).filter(node => node.id !== currentPath().at(-1));
 const getMapCandidates = () => state.mode === 'manual' ? getCandidates() : frames[state.frame].done ? [] : frames[state.frame].open;
 const nextExpansion = () => state.mode === 'astar' && !frames[state.frame].done ? frames[state.frame].open[0] : null;
 const highlightedId = () => state.mode === 'manual' ? getCandidates()[0]?.id : nextExpansion()?.id;
@@ -33,6 +34,14 @@ function selectNode(id) {
 function rewind(index) {
   if (state.mode !== 'manual' || index < 0 || index >= state.path.length) return;
   state.path = state.path.slice(0, index + 1); state.hover = null; render(); announce(`${state.path.at(-1)}까지의 경로로 돌아왔습니다.`);
+}
+function selectSibling(id) {
+  if (state.mode !== 'manual') return false;
+  const choice = getSiblings().find(node => node.id === id);
+  if (!choice) return false;
+  state.path = [...choice.path]; state.hover = null; render();
+  announce(id === 'G' ? goalMessage() : `부모 ${choice.path.at(-2)}에서 ${id}로 가지를 바꿨습니다.`, id === 'G');
+  return true;
 }
 function reset() {
   state.path = ['S']; state.frame = 0; state.hover = null; state.zoom = { map: 1, tree: 1 }; render();
@@ -96,34 +105,44 @@ function renderMap() {
   $('#map-status').textContent=current==='G'?'목표 도착 · h(G) = 0':state.mode==='manual'?'청록색 이웃 중 직접 이동 · 최소 f가 최적 이동을 보장하지 않음':'청록: OPEN 노드의 최선 부모 연결 · 파랑: 현재 확장 노드까지의 경로';
 }
 function renderTree() {
-  const path=currentPath(),window=treeWindow(path), list=getCandidates().sort((a,b)=>natural(a.id,b.id)), best=highlightedId();
-  const W=Math.max(760,list.length*127+110), H=520, cx=W/2, top=72, middle=228, bottom=390;
-  const svg=$('#tree');svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.style.width=`${(state.treeFit ? $('#tree-viewport').clientWidth : Math.max($('#tree-viewport').clientWidth, list.length*125+100))*state.zoom.tree}px`;svg.style.height=`${state.zoom.tree*100}%`;svg.style.minWidth='0';
-  svg.dataset.topDepth=window.levels[0]??'none';svg.dataset.currentDepth=window.levels[1];svg.dataset.bottomDepth=window.levels[2];
+  const path=currentPath(),view=treeWindow(path), list=getCandidates().sort((a,b)=>natural(a.id,b.id)), siblings=getSiblings().sort((a,b)=>natural(a.id,b.id)), best=highlightedId();
+  const leftCount=Math.ceil(siblings.length/2), columns=Math.max(list.length,2*leftCount+1), spacing=127;
+  const W=Math.max(760,columns*spacing+110), H=520, cx=W/2, top=72, middle=228, bottom=390;
+  const siblingX=i=>cx+(i<leftCount?i-leftCount:i-leftCount+1)*spacing;
+  const viewport=$('#tree-viewport'), svg=$('#tree');
+  svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.style.width=`${(state.treeFit ? viewport.clientWidth : Math.max(viewport.clientWidth, columns*125+100))*state.zoom.tree}px`;svg.style.height=`${state.zoom.tree*100}%`;svg.style.minWidth='0';
+  svg.dataset.topDepth=view.levels[0]??'none';svg.dataset.currentDepth=view.levels[1];svg.dataset.bottomDepth=view.levels[2];
   let html='';
   for(const y of [top,middle,bottom]) html+=`<line x1="22" y1="${y}" x2="${W-22}" y2="${y}" stroke="#ebf0f6" stroke-width="1"/>`;
-  const node=(id,x,y,type,depth)=>{
-    const p=graph.points[id], selected=type==='current', candidate=type==='candidate', parent=type==='parent';
-    return `<g data-node="${id}" ${parent&&state.mode==='manual'?`data-rewind="${path.length-2}" role="button" tabindex="0" aria-label="부모 ${id}로 돌아가기"`:candidate&&state.mode==='manual'?`role="button" tabindex="0" aria-label="${id} 선택"`:''} class="svg-node ${(candidate||parent)&&state.mode==='manual'?'selectable':''}">${selected?`<circle cx="${x}" cy="${y}" r="37" fill="#245be50d"/>`:''}<circle cx="${x}" cy="${y}" r="${selected?31:24}" fill="${selected?'#245be5':parent?'#eef3ff':'white'}" stroke="${candidate?'#099f92':selected?'#245be5':'#a4b5cd'}" stroke-width="${candidate?2:1.5}"/><text x="${x}" y="${y}" text-anchor="middle"></text><text x="${x}" y="${y+(selected&&state.showCoordinates?-1:5)}" text-anchor="middle" font-size="${selected?18:16}" font-weight="700" fill="${selected?'white':'#294363'}">${id}</text>${selected&&state.showCoordinates?`<text x="${x}" y="${y+15}" text-anchor="middle" font-size="10" fill="#eef4ff">(${p.x}, ${p.y})</text>`:''}</g>`;
+  const costCard=(c,x,y,sibling=false)=>state.showCost?`<rect x="${x-58}" y="${y+32}" width="116" height="58" rx="6" class="cost-card ${sibling?'sibling-cost':c.id===best?'best':''}"/><text x="${x}" y="${y+51}" text-anchor="middle" class="cost-label" font-weight="700" fill="${sibling?'#60738d':'#223d64'}">${fmt(c.f)}</text><text x="${x}" y="${y+69}" text-anchor="middle" class="cost-label" fill="#58708f">≈ ${fmt(c.g)} +</text><text x="${x}" y="${y+84}" text-anchor="middle" class="cost-label" fill="${sibling?'#60738d':'#078f84'}">${fmt(c.h)}</text>${!sibling&&c.id===best?`<rect x="${x-27}" y="${y+93}" width="54" height="20" rx="4" fill="#0b9e90"/><text x="${x}" y="${y+107}" text-anchor="middle" font-size="10" fill="white">${minimumLabel()}</text>`:''}`:'';
+  const node=(id,x,y,type,extra='')=>{
+    const p=graph.points[id], selected=type==='current', candidate=type==='candidate', parent=type==='parent', sibling=type==='sibling', interactive=state.mode==='manual'&&!selected;
+    const action=parent?`data-rewind="${path.length-2}"`:sibling?`data-sibling="${id}"`:'';
+    const label=parent?`부모 ${id}로 돌아가기`:sibling?`부모 ${view.parent}에서 ${id}로 가지 바꾸기`:`${id} 선택`;
+    return `<g data-node="${id}" data-tree-role="${type}" ${action} ${interactive?`role="button" tabindex="0" aria-label="${label}"`:''} class="svg-node ${interactive?'selectable':''}">${selected?`<circle cx="${x}" cy="${y}" r="37" fill="#245be50d"/>`:''}<circle cx="${x}" cy="${y}" r="${selected?31:24}" fill="${selected?'#245be5':parent?'#eef3ff':sibling?'#f4f6fa':'white'}" stroke="${candidate?'#099f92':selected?'#245be5':sibling?'#b6c2d2':'#a4b5cd'}" stroke-width="${candidate?2:1.5}"/><text x="${x}" y="${y+(selected&&state.showCoordinates?-1:5)}" text-anchor="middle" font-size="${selected?18:16}" font-weight="700" fill="${selected?'white':sibling?'#60738d':'#294363'}">${id}</text>${selected&&state.showCoordinates?`<text x="${x}" y="${y+15}" text-anchor="middle" font-size="10" fill="#eef4ff">(${p.x}, ${p.y})</text>`:''}${extra}</g>`;
   };
-  if(window.parent) {html+=`<line x1="${cx}" y1="${top+25}" x2="${cx}" y2="${middle-31}" class="path-edge"/>`;html+=node(window.parent,cx,top,'parent',window.levels[0]);html+=`<text x="${cx-42}" y="${top+4}" text-anchor="end" class="tree-label">부모</text>`;} else html+=`<text x="${cx}" y="${top+4}" text-anchor="middle" class="tree-label">이전 노드 없음</text>`;
+  for(let i=0;i<siblings.length;i++)html+=`<line data-sibling-edge="${siblings[i].id}" x1="${cx}" y1="${top+24}" x2="${siblingX(i)}" y2="${middle-24}" class="sibling-edge"/>`;
+  if(view.parent)html+=`<line x1="${cx}" y1="${top+25}" x2="${cx}" y2="${middle-31}" class="path-edge"/>`;
   const start=(W-(list.length-1)*127)/2;
   for(let i=0;i<list.length;i++){const c=list[i],x=start+i*127;html+=`<line data-edge-node="${c.id}" x1="${cx}" y1="${middle+29}" x2="${x}" y2="${bottom-24}" class="next-edge"/>`;}
-  html+=node(window.current,cx,middle,'current',window.levels[1]);
-  html+=`<text x="${cx+43}" y="${middle+4}" class="tree-label" fill="#245be5">현재</text>`;
+  if(view.parent){html+=node(view.parent,cx,top,'parent');html+=`<text x="${cx-42}" y="${top+4}" text-anchor="end" class="tree-label">부모</text>`;}else html+=`<text x="${cx}" y="${top+4}" text-anchor="middle" class="tree-label">이전 노드 없음</text>`;
+  for(let i=0;i<siblings.length;i++){const c=siblings[i],x=siblingX(i);html+=node(c.id,x,middle,'sibling',`<text x="${x}" y="${middle-37}" text-anchor="middle" class="tree-label">형제 · 부모 경유</text>`+costCard(c,x,middle,true));}
+  html+=node(view.current,cx,middle,'current');
+  html+=`<text x="${cx}" y="${middle-45}" text-anchor="middle" font-size="12" fill="#245be5">현재</text>`;
   for(let i=0;i<list.length;i++) {
-    const c=list[i],x=start+i*127;html+=node(c.id,x,bottom,'candidate',window.levels[2]);
-    if(state.showCost) html+=`<g data-node="${c.id}"><rect x="${x-58}" y="${bottom+32}" width="116" height="58" rx="6" class="cost-card ${c.id===best?'best':''}"/><text x="${x}" y="${bottom+51}" text-anchor="middle" class="cost-label" font-weight="700" fill="#223d64">${fmt(c.f)}</text><text x="${x}" y="${bottom+69}" text-anchor="middle" class="cost-label" fill="#58708f">≈ ${fmt(c.g)} +</text><text x="${x}" y="${bottom+84}" text-anchor="middle" class="cost-label" fill="#078f84">${fmt(c.h)}</text>${c.id===best?`<rect x="${x-27}" y="${bottom+93}" width="54" height="20" rx="4" fill="#0b9e90"/><text x="${x}" y="${bottom+107}" text-anchor="middle" font-size="10" fill="white">${minimumLabel()}</text>`:''}</g>`;
+    const c=list[i],x=start+i*127;html+=node(c.id,x,bottom,'candidate',costCard(c,x,bottom));
   }
-  if(!list.length) html+=`<text x="${cx}" y="${bottom}" text-anchor="middle" font-size="17" fill="#078f84">${window.current==='G'?'목표 G 도착 · h(G) = 0':state.mode==='astar'?'이번 확장에서 갱신한 자식이 없습니다.':'새로운 이동 후보가 없습니다.'}</text><text x="${cx}" y="${bottom+28}" text-anchor="middle" class="tree-label">${window.current==='G'?'현재 경로의 총 거리를 확인하세요.':state.mode==='astar'?'다음 확장은 전체 OPEN 후보에서 선택합니다.':'부모 노드나 이동 이력으로 돌아갈 수 있습니다.'}</text>`;
-  for(const [i,y] of [top,middle,bottom-48].entries()) {
-    const x=i===2?cx:cx+114;
-    html+=`<rect x="${x-40}" y="${y-13}" width="80" height="25" rx="6" fill="#f5f8fd"/><text x="${x}" y="${y+4}" text-anchor="middle" class="tree-label">${window.levels[i]===null?'시작':'Depth '+window.levels[i]}</text>`;
+  if(!list.length) html+=`<text x="${cx}" y="${bottom}" text-anchor="middle" font-size="17" fill="#078f84">${view.current==='G'?'목표 G 도착 · h(G) = 0':state.mode==='astar'?'이번 확장에서 갱신한 자식이 없습니다.':'새로운 이동 후보가 없습니다.'}</text><text x="${cx}" y="${bottom+28}" text-anchor="middle" class="tree-label">${view.current==='G'?'현재 경로의 총 거리를 확인하세요.':state.mode==='astar'?'다음 확장은 전체 OPEN 후보에서 선택합니다.':'부모 노드나 이동 이력으로 돌아갈 수 있습니다.'}</text>`;
+  for(const [i,y] of [top-48,middle-70,bottom-48].entries()) {
+    html+=`<rect x="${cx-40}" y="${y-13}" width="80" height="25" rx="6" fill="#f5f8fd"/><text x="${cx}" y="${y+4}" text-anchor="middle" class="tree-label">${view.levels[i]===null?'시작':'Depth '+view.levels[i]}</text>`;
   }
   svg.innerHTML=html;
-  $('#tree-range').textContent=(window.parent?`표시 깊이 ${window.levels[0]}–${window.levels[2]}`:'시작 S · 다음 깊이 1')+(state.mode==='astar'?' · 이번 확장에서 갱신한 가지':' · 선택에 따라 이동');
-  $('#tree-count').textContent=state.mode==='astar'?`이번 갱신 ${list.length}개`:`다음 후보 ${list.length}개`;
-  $('#tree-kind').textContent=state.mode==='astar'?'부모 · 확장 노드 · 갱신한 자식':'부모 · 현재 · 다음 후보';
+  viewport.scrollLeft=Math.max(0,(viewport.scrollWidth-viewport.clientWidth)/2);
+  $('#tree-range').textContent=(view.parent?`표시 깊이 ${view.levels[0]}–${view.levels[2]}`:'시작 S · 다음 깊이 1')+' · 현재 노드 중앙 배치';
+  $('#tree-count').textContent=`형제 ${siblings.length}개 · ${state.mode==='astar'?'갱신':'다음'} ${list.length}개`;
+  $('#tree-kind').textContent='부모 · 현재와 형제 · 다음 후보';
+  $('#tree-sibling-note').hidden=!siblings.length;
+  $('#tree-sibling-note').textContent=state.mode==='astar'?'회색 형제는 같은 부모에서 갈 수 있는 다른 가지입니다. 비용은 표시된 부모 경유 기준이며, 전체 OPEN의 최선 비용과 다를 수 있습니다.':'회색 형제는 같은 부모에서 갈 수 있는 다른 가지입니다. 누르면 부모로 돌아가 해당 가지를 선택합니다. 비용은 부모 경유 기준입니다.';
 }
 function renderTable() {
   const list=state.mode==='astar'?frames[state.frame].open.slice():getCandidates();
@@ -173,6 +192,7 @@ document.addEventListener('click',event=>{
   const target=event.target;
   const back=target.closest('[data-rewind]');if(back){rewind(Number(back.dataset.rewind));return;}
   const select=target.closest('[data-select]');if(select){selectNode(select.dataset.select);return;}
+  const sibling=target.closest('[data-sibling]');if(sibling){selectSibling(sibling.dataset.sibling);return;}
   const node=target.closest('.svg-node[data-node]');if(node){selectNode(node.dataset.node);return;}
   if(target.closest('[data-astar-step]'))stepAStar();
 });
@@ -192,13 +212,15 @@ document.querySelectorAll('.dialog-close').forEach(button=>button.addEventListen
 $('#help-dialog').addEventListener('click',event=>{if(event.target===$('#help-dialog'))$('#help-dialog').close();});
 function setHover(id, event) {
   state.hover=id;
-  document.querySelectorAll('[data-edge-node]').forEach(el=>el.classList.toggle('hover-edge',el.dataset.edgeNode===id));
-  document.querySelectorAll('#candidate-body tr[data-node]').forEach(el=>el.classList.toggle('hovered',el.dataset.node===id));
-  document.querySelectorAll('.svg-node[data-node]').forEach(el=>el.classList.toggle('hovered-node',el.dataset.node===id));
+  const sibling=!!event?.target.closest('[data-sibling]');
+  document.querySelectorAll('[data-edge-node]').forEach(el=>el.classList.toggle('hover-edge',!sibling&&el.dataset.edgeNode===id));
+  document.querySelectorAll('[data-sibling-edge]').forEach(el=>el.classList.toggle('hover-edge',sibling&&el.dataset.siblingEdge===id));
+  document.querySelectorAll('#candidate-body tr[data-node]').forEach(el=>el.classList.toggle('hovered',!sibling&&el.dataset.node===id));
+  document.querySelectorAll('.svg-node[data-node]').forEach(el=>el.classList.toggle('hovered-node',el.dataset.node===id&&el.hasAttribute('data-sibling')===sibling));
   const tooltip=$('#node-tooltip');
   if(!id){tooltip.hidden=true;return;}
-  const item=(state.mode==='astar'?frames[state.frame].open: getCandidates()).find(c=>c.id===id) ?? (id===getCurrent().id ? getCurrent() : null), p=graph.points[id];
-  tooltip.innerHTML=`<strong>${id} · (${p.x}, ${p.y})</strong>${item?`f ≈ ${fmt(item.f)} = g ${fmt(item.g)} + h ${fmt(item.h)}<br>${item.step?`이번 이동 거리 ${fmt(item.step)}`:currentPath().includes(id)?'현재 선택 경로':'전체 OPEN 후보'}`:`목표까지 직선거리 h ≈ ${fmt(Math.hypot(833-p.x,375-p.y))}`} `;
+  const item=(sibling?getSiblings():state.mode==='astar'?frames[state.frame].open:getCandidates()).find(c=>c.id===id) ?? (id===getCurrent().id ? getCurrent() : null), p=graph.points[id];
+  tooltip.innerHTML=`<strong>${id} · (${p.x}, ${p.y})</strong>${item?`f ≈ ${fmt(item.f)} = g ${fmt(item.g)} + h ${fmt(item.h)}<br>${sibling?`부모 ${currentPath().at(-2)} 경유 기준${state.mode==='manual'?' · 클릭하여 가지 변경':''}`:item.step?`이번 이동 거리 ${fmt(item.step)}`:currentPath().includes(id)?'현재 선택 경로':'전체 OPEN 후보'}`:`목표까지 직선거리 h ≈ ${fmt(Math.hypot(833-p.x,375-p.y))}`} `;
   tooltip.hidden=false;
   const rect=event.target.getBoundingClientRect(),x=event.clientX??rect.left,y=event.clientY??rect.top;
   tooltip.style.left=`${Math.min(innerWidth-290,Math.max(8,x+15))}px`;tooltip.style.top=`${Math.min(innerHeight-110,Math.max(8,y+18))}px`;
@@ -209,7 +231,7 @@ document.addEventListener('focusin',event=>{const node=event.target.closest('[da
 document.addEventListener('focusout',()=>setHover(null));
 function styledSVG(element) {
   const clone=element.cloneNode(true), original=[element,...element.querySelectorAll('*')], copied=[clone,...clone.querySelectorAll('*')];
-  const properties=['fill','stroke','stroke-width','stroke-opacity','fill-opacity','font-family','font-size','font-weight','text-anchor','stroke-linecap','stroke-linejoin','opacity'];
+  const properties=['fill','stroke','stroke-width','stroke-opacity','stroke-dasharray','fill-opacity','font-family','font-size','font-weight','text-anchor','stroke-linecap','stroke-linejoin','opacity'];
   for(let i=0;i<original.length;i++){const style=getComputedStyle(original[i]);for(const property of properties)copied[i].style.setProperty(property,style.getPropertyValue(property));}
   clone.removeAttribute('style');clone.setAttribute('xmlns','http://www.w3.org/2000/svg');clone.setAttribute('width','100%');clone.setAttribute('height','100%');
   return new XMLSerializer().serializeToString(clone);
@@ -221,7 +243,7 @@ async function exportImage() {
     const H=Math.max(1160,880+list.length*31),W=2400;
     let source=`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><rect width="100%" height="100%" fill="#f5f8fc"/><g font-family="Malgun Gothic,Arial,sans-serif" fill="#17243c"><text x="45" y="58" font-size="30" font-weight="700">A* 경로 탐색 실습</text><text x="45" y="105" font-size="23">${escape(currentPath().join(' → '))}   |   g ${fmt(c.g)}   h ${fmt(c.h)}   f ${fmt(c.f)}</text><text x="45" y="146" font-size="17" fill="#687c99">${state.mode==='manual'?'직접 선택 (최단경로 보장 없음)':frames[state.frame].done?'A* 최단경로 확정':'A* 탐색 중 (확장 순서는 이동 경로 아님)'} · 깊이 ${c.depth} · f(n) = g(n) + h(n)</text><text x="45" y="167" font-size="15" fill="#245be5">${c.id==='G'?escape(goalMessage()):state.mode==='manual'?'이웃 최소 f는 이웃 사이의 추정치 비교입니다. 실제 최단경로는 A*로 확인하세요.':`다음 확장: ${nextExpansion()?.id??'없음'} · 전체 OPEN에서 선택 · 부모 연결로 이동 경로 복원`}</text><rect x="30" y="175" width="1260" height="605" rx="14" fill="white"/><rect x="1310" y="175" width="1060" height="605" rx="14" fill="white"/><svg x="40" y="184" width="1240" height="585">${map}</svg><svg x="1320" y="184" width="1040" height="585">${tree}</svg><text x="45" y="828" font-size="21" font-weight="700">${state.mode==='manual'?'다음 이동 후보':'전체 OPEN 후보'} · f ≈ g + h</text>`;
     list.forEach((item,i)=>{source+=`<text x="45" y="${867+i*31}" font-size="20">${item.id}     ${fmt(item.f)} ≈ ${fmt(item.g)} + ${fmt(item.h)}</text>`;});
-    source+=`<text x="1325" y="832" font-size="20" fill="#245be5">진한 파랑: ${state.mode==='manual'?'직접 선택 경로':'현재 확장 노드까지의 최선 경로'}</text><text x="1325" y="868" font-size="20" fill="#078f84">청록: ${state.mode==='manual'?'다음 이동 후보':'OPEN의 부모 연결'}</text><text x="1325" y="904" font-size="20" fill="#687c99">회색: 전체 이동 가능 연결</text><text x="1325" y="957" font-size="17" fill="#687c99">장애물 내부 통과 금지 · 경계 이동 허용</text><text x="1325" y="989" font-size="17" fill="#687c99">Figure 3.31의 비율을 기준으로 재구성한 좌표</text><text x="1325" y="1030" font-size="17" fill="#245be5">${c.id==='G'?`A* 최단거리 ${fmt(optimal.g)} · 선택 경로와 차이 ${fmt(c.g-optimal.g)}`:state.mode==='manual'?'이웃 최소 f는 실제 최단 이동을 보장하지 않습니다.':'확장 순서를 이어붙이지 않고 부모 연결을 복원합니다.'}</text></g></svg>`;
+    source+=`<text x="1325" y="832" font-size="20" fill="#245be5">진한 파랑: ${state.mode==='manual'?'직접 선택 경로':'현재 확장 노드까지의 최선 경로'}</text><text x="1325" y="868" font-size="20" fill="#078f84">청록: ${state.mode==='manual'?'다음 이동 후보':'OPEN의 부모 연결'}</text><text x="1325" y="904" font-size="20" fill="#687c99">회색: 전체 이동 가능 연결</text><text x="1325" y="930" font-size="17" fill="#687c99">트리 회색 점선: 형제 가지 · 비용은 표시된 부모 경유 기준</text><text x="1325" y="957" font-size="17" fill="#687c99">장애물 내부 통과 금지 · 경계 이동 허용</text><text x="1325" y="989" font-size="17" fill="#687c99">Figure 3.31의 비율을 기준으로 재구성한 좌표</text><text x="1325" y="1030" font-size="17" fill="#245be5">${c.id==='G'?`A* 최단거리 ${fmt(optimal.g)} · 선택 경로와 차이 ${fmt(c.g-optimal.g)}`:state.mode==='manual'?'이웃 최소 f는 실제 최단 이동을 보장하지 않습니다.':'확장 순서를 이어붙이지 않고 부모 연결을 복원합니다.'}</text></g></svg>`;
     const url=URL.createObjectURL(new Blob([source],{type:'image/svg+xml;charset=utf-8'}));
     try {
       const image=new Image(); await new Promise((resolve,reject)=>{image.onload=resolve;image.onerror=()=>reject(new Error('이미지 변환 실패'));image.src=url;});
@@ -238,7 +260,7 @@ $('#export-dialog').addEventListener('click',event=>{if(event.target===$('#expor
 const resize=new ResizeObserver(()=>renderTree());resize.observe($('#tree-viewport'));
 
 function stateSummary() {
-  return { mode:state.mode,path:[...currentPath()],current:getCurrent(),tree:treeWindow(currentPath()),candidates:getCandidates(),frontier:frames[state.frame].open,nextExpansion:nextExpansion()?.id??null,optimal,astar:{step:state.frame,finished:frames[state.frame].done,expansionOrder:frames.slice(0,state.frame+1).map(frame=>frame.current.id)} };
+  return { mode:state.mode,path:[...currentPath()],current:getCurrent(),tree:{...treeWindow(currentPath()),siblings:getSiblings()},candidates:getCandidates(),frontier:frames[state.frame].open,nextExpansion:nextExpansion()?.id??null,optimal,astar:{step:state.frame,finished:frames[state.frame].done,expansionOrder:frames.slice(0,state.frame+1).map(frame=>frame.current.id)} };
 }
 function registerTools() {
   const context=document.modelContext;if(!context?.registerTool)return;
