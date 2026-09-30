@@ -155,11 +155,11 @@ function renderTable() {
 }
 function renderGuidance() {
   const current = getCurrent(), isAStar = state.mode === 'astar', next = nextExpansion();
-  $('#mode-heading').textContent=isAStar?'A* · 전체 OPEN에서 최소 f 확장':'직접 경로 선택 · 최단경로 보장 없음';
+  $('#mode-heading').textContent=isAStar?'A* · 확장된 전체 후보 노드 중 최소 f 경로 선택':'현재 노드 기준 경로 선택';
   $('#mode-guidance').textContent=isAStar
     ? frames[state.frame].done?'목표 G를 OPEN에서 꺼낸 뒤 부모 연결로 복원한 최단경로입니다.'
       : `다음 확장: ${next?.id ?? '없음'}. 이전에 발견한 후보도 계속 비교합니다. 확장 노드를 순서대로 잇지 않습니다.`
-    : '이웃 최소 f만 계속 선택하는 것은 A*가 아닙니다. h는 직선거리 추정이므로, 실제로 더 돌아갈 수 있습니다.';
+    : '현재 노드에서의 최소 f만 계속 선택합니다. h는 직선거리 추정이므로, 실제로는 더 돌아갈 수 있습니다.';
   $('#optimal-path').disabled=isAStar&&frames[state.frame].done;
   $('#restart-astar').hidden=!isAStar;
   $('#expansion-history').hidden=!isAStar;
@@ -168,8 +168,8 @@ function renderGuidance() {
   $('#route-comparison').hidden=!finished;
   $('#route-comparison').textContent=finished?`${isAStar?'A* 경로':'직접 선택 경로'} ${fmt(current.g)} · 최단거리 ${fmt(optimal.g)} · 차이 ${extra>1e-8?`+${fmt(extra)} (${fmt(extra/optimal.g*100)}%)`:'0.00'} | 최적 경로: ${optimal.path.join(' → ')}`:'';
   $('#legend-path').textContent=isAStar?'현재 최선 경로':'지나온 경로';
-  $('#legend-next').textContent=isAStar?'OPEN의 부모 연결':'다음 이동 후보';
-  $('#legend-candidate').textContent=isAStar?'OPEN 후보':'선택 가능';
+  $('#legend-next').textContent=isAStar?'확장된 전체 노드의 부모 연결':'다음 이동 후보';
+  $('#legend-candidate').textContent=isAStar?'확장가능한 전체 후보':'선택 가능';
 }
 function render() {
   const path=currentPath(),c=getCurrent(),goal=c.id==='G';
@@ -179,7 +179,7 @@ function render() {
   $('#undo').disabled=state.mode==='astar'?state.frame===0:path.length===1;
   $('#astar-step').hidden=state.mode!=='astar';$('#astar-step').disabled=state.frame===frames.length-1;
   $('#mode-badge').textContent=state.mode==='astar'?`A* · ${state.frame+1}회 확장`:'직접 선택';
-  $('#mode-note').textContent=state.mode==='astar'?'더 작은 g로 도달할 때만 비용과 부모를 갱신합니다. 지도와 표는 동일한 OPEN 값을 사용하며, 트리 하단은 이번 확장에서 갱신한 자식입니다.':'이웃 최소 f를 따라가도 최단경로가 아닐 수 있습니다. 같은 꼭짓점의 h는 같아도 선택 경로에 따라 g와 f는 달라집니다.';
+  $('#mode-note').textContent=state.mode==='astar'?'더 작은 g로 도달할 때만 비용과 부모를 갱신합니다. 트리 하단은 이번 확장에서 갱신한 자식 노드입니다.':'이웃 최소 f를 따라가도 최단경로가 아닐 수 있습니다. 같은 꼭짓점의 h는 같아도 선택 경로에 따라 g와 f는 달라집니다.';
   $('#visited-count').textContent=state.mode==='astar'?`CLOSED ${frames[state.frame].closed.length}개`:`방문 ${path.length}개`;
   $('#open-count').textContent=state.mode==='astar'?`OPEN ${frames[state.frame].open.length}개`:`다음 후보 ${getCandidates().length}개`;
   document.querySelectorAll('[data-mode]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.mode===state.mode)));
@@ -201,8 +201,8 @@ $('#undo').addEventListener('click',()=>{if(state.mode==='astar'){if(state.frame
 $('#reset').addEventListener('click',reset);
 $('#astar-step').addEventListener('click',stepAStar);
 $('#optimal-path').addEventListener('click',showOptimalPath);
-$('#restart-astar').addEventListener('click',()=>{state.mode='astar';state.frame=0;render();announce('A*를 S부터 다시 시작했습니다. 전체 OPEN 후보를 비교하세요.');});
-function setMode(mode) { if (!['manual','astar'].includes(mode)) throw new Error('유효하지 않은 모드입니다.'); state.mode=mode;state.hover=null;render();announce(getCurrent().id==='G'?goalMessage():state.mode==='astar'?'A*: 전체 OPEN 후보의 최소 f를 확장합니다. 확장 순서와 실제 경로는 다릅니다.':'직접 선택: 이웃 최소 f는 최적 이동을 보장하지 않습니다.',getCurrent().id==='G'); }
+$('#restart-astar').addEventListener('click',()=>{state.mode='astar';state.frame=0;render();announce('A*를 S부터 다시 시작했습니다. 확장 가능한 전체 노드 후보를 비교하세요.');});
+function setMode(mode) { if (!['manual','astar'].includes(mode)) throw new Error('유효하지 않은 모드입니다.'); state.mode=mode;state.hover=null;render();announce(getCurrent().id==='G'?goalMessage():state.mode==='astar'?'A*: 이전에 발견한 전체 후보 노드의 최소 f를 확장합니다. 확장 순서와 실제 경로는 다릅니다.':'직접 선택: 현재 노드 기준에서 선택가능한 노드들의 최소 f는 최적 이동을 보장하지 않습니다.',getCurrent().id==='G'); }
 document.querySelectorAll('[data-mode]').forEach(button=>button.addEventListener('click',()=>setMode(button.dataset.mode)));
 $('#sort').addEventListener('change',event=>{state.sort=event.target.value;renderTable();});
 for(const [selector,property] of [['#show-edges','showEdges'],['#show-cost','showCost'],['#show-coordinates','showCoordinates']]) $(selector).addEventListener('change',event=>{state[property]=event.target.checked;renderMap();renderTree();});
