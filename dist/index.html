@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>A* 경로 탐색 실습</title>
+  <meta name="description" content="Figure 3.31에서 경로를 직접 선택하고 좌표 지도, 3수준 탐색 트리, g·h·f 비용을 함께 살펴보세요.">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath d='M8 32L20 8L32 32' stroke='%23245be5' stroke-width='4' fill='none'/%3E%3Cg fill='white' stroke='%23245be5' stroke-width='4'%3E%3Ccircle cx='8' cy='32' r='5'/%3E%3Ccircle cx='20' cy='8' r='5'/%3E%3Ccircle cx='32' cy='32' r='5'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><svg viewBox="0 0 42 42" aria-hidden="true"><path d="M8 33 21 8 34 33M21 8v20"/><circle cx="8" cy="33" r="4"/><circle cx="21" cy="8" r="4"/><circle cx="34" cy="33" r="4"/><circle cx="21" cy="30" r="4"/></svg><div><h1>A* 경로 탐색 실습</h1><p>Homework 1 · Robot Navigation</p></div></div>
+    <div class="header-actions"><button id="undo" class="button">한 단계 뒤로</button><button id="reset" class="button">초기화</button><button id="export" class="button">이미지 저장</button></div>
+  </header>
+  <main>
+    <section class="status-strip" aria-label="현재 경로와 비용">
+      <div class="status-main"><div class="path-summary"><span class="eyebrow">선택 경로</span><div id="breadcrumbs"></div></div><div class="metric"><span>g(n) <small>누적 이동 거리</small></span><strong id="current-g">0.00</strong></div><div class="metric"><span>h(n) <small>목표까지 직선거리</small></span><strong id="current-h">743.07</strong></div><div class="metric total"><span>f(n) = g(n) + h(n)</span><strong id="current-f">743.07</strong><small id="current-equation"></small></div></div>
+      <div class="status-mode"><div class="segmented" aria-label="탐색 모드"><button data-mode="manual" aria-pressed="true">직접 선택</button><button data-mode="astar" aria-pressed="false">A* 비교</button></div><div class="tiny-metric">현재 깊이<strong id="depth">0</strong></div><div class="tiny-metric">목표 G<strong class="blue">(833, 375)</strong></div></div>
+    </section>
+    <div id="notice" class="notice" role="status">S에서 다음 노드를 선택해 탐색을 시작하세요.</div>
+    <section class="visuals">
+      <article class="panel map-panel"><div class="panel-heading"><div><h2>Figure 3.31 · 좌표 지도</h2><p>8개 장애물 · 33개 꼭짓점 · <span id="edge-count">118</span>개 연결</p></div><div class="view-controls"><button data-zoom="map:-" aria-label="지도 축소">−</button><button data-zoom="map:+" aria-label="지도 확대">+</button><button data-zoom="map:reset">전체 보기</button></div></div><div class="viewport map-viewport" id="map-viewport"><svg id="map" role="group" aria-label="이동 가능한 꼭짓점을 선택하는 좌표 지도"></svg></div><div class="panel-bottom"><span id="map-status">청록색 노드를 선택하세요.</span><span>원점 (0, 0) · 동일 축척</span></div></article>
+      <article class="panel tree-panel"><div class="panel-heading"><div><h2>탐색 트리 · 선택 가지</h2><p id="tree-range">현재 노드와 다음 후보</p></div><div class="view-controls"><button data-zoom="tree:-" aria-label="트리 축소">−</button><button data-zoom="tree:+" aria-label="트리 확대">+</button><button data-zoom="tree:reset">전체 보기</button></div></div><div class="viewport tree-viewport" id="tree-viewport"><svg id="tree" role="group" aria-label="부모, 현재 노드, 다음 후보를 보여주는 탐색 트리"></svg></div><div class="panel-bottom"><span>부모 · 현재 · 다음 후보</span><span id="tree-count">다음 후보 4개</span></div></article>
+    </section>
+    <section class="legend-bar" aria-label="경로 범례 및 표시 설정"><div class="legend"><span><i class="line traveled"></i>지나온 경로</span><span><i class="line next"></i>다음 이동 후보</span><span><i class="line all"></i>전체 이동 가능 연결</span><span><i class="node selected"></i>현재 노드</span><span><i class="node candidate"></i>선택 가능</span></div><div class="switches"><label>전체 연결<input type="checkbox" id="show-edges" checked role="switch"></label><label>비용 라벨<input type="checkbox" id="show-cost" checked role="switch"></label><label>좌표<input type="checkbox" id="show-coordinates" checked role="switch"></label></div></section>
+    <section class="details-grid"><article class="panel candidates-panel"><div class="panel-heading"><div class="table-heading"><h2 id="candidate-title">다음 노드 비교</h2><select id="sort" aria-label="후보 정렬"><option value="f">f 오름차순</option><option value="g">g 오름차순</option><option value="h">h 오름차순</option><option value="id">노드 번호순</option></select><span id="candidate-count" class="muted">4개 후보</span></div><button id="astar-step" class="button primary" hidden>다음 최소 f 확장</button></div><div class="table-scroll"><table><thead><tr><th scope="col">노드</th><th scope="col">다음 g <small>(누적)</small></th><th scope="col">h <small>(남은 거리 추정)</small></th><th scope="col">f = g + h</th><th scope="col">설명</th><th scope="col">선택</th></tr></thead><tbody id="candidate-body"></tbody></table></div><div class="panel-bottom" id="table-note">현재 후보 중 최소 f는 전체 최단경로를 보장하지 않습니다.</div></article>
+      <aside class="panel explanation"><div class="panel-heading"><h2>경로와 휴리스틱</h2><span id="mode-badge" class="badge neutral">직접 선택</span></div><div class="explanation-content"><div id="history" aria-label="이동 이력"></div><div class="definitions"><p><b class="blue">g(n)</b><span>시작점부터 누적 이동 거리</span></p><p><b class="teal">h(n)</b><span>목표 G까지의 직선거리</span></p><p><b class="violet">f(n)</b><span>g(n) + h(n), 예상 총비용</span></p></div><div class="formula">h(n) = √((833 − x)² + (375 − y)²)</div><p class="help-note" id="mode-note">같은 꼭짓점도 경로에 따라 g와 f는 달라집니다. 직접 선택은 현재 이웃을, A*는 전체 OPEN 후보를 비교합니다.</p><div class="learning-stats"><span id="visited-count">방문 1개</span><span id="open-count">다음 후보 4개</span><button id="help" class="text-button">사용 방법</button></div></div></aside>
+    </section>
+    <footer>원도 비율을 기준으로 재구성한 정수 좌표입니다. 장애물 경계 이동은 허용하고 내부 통과는 금지합니다. 비용은 소수 둘째 자리까지 표시합니다.</footer>
+  </main>
+  <div class="tooltip" id="node-tooltip" role="tooltip" hidden></div>
+  <dialog id="help-dialog"><button class="dialog-close" aria-label="도움말 닫기">×</button><h2>노드를 선택하며 경로를 비교하세요</h2><ol><li>지도·트리의 청록색 노드 또는 표의 ‘선택’을 누릅니다.</li><li>진한 파랑은 선택한 경로, 청록은 다음 이동 후보입니다.</li><li>트리는 부모–현재–다음 후보의 세 수준으로 따라 이동합니다.</li><li>이미 방문한 노드는 다음 후보에서 제외합니다. 되돌리기나 경로 이력으로 돌아갈 수 있습니다.</li><li>A* 비교는 전체 OPEN 후보 중 최소 f를 하나씩 확장합니다.</li></ol><p>h는 직선거리 추정이므로 실제로 장애물을 돌아가는 경로보다 짧을 수 있습니다. 각 후보의 g는 그 후보로 이동한 이후의 누적 거리입니다.</p><button class="button primary dialog-close">확인</button></dialog>
+  <dialog id="export-dialog"><button class="export-close" aria-label="이미지 미리보기 닫기">×</button><h2>현재 탐색 결과</h2><p>좌표 지도·탐색 트리·비용표를 하나의 이미지로 저장합니다.</p><img id="export-preview" alt="현재 선택한 경로의 지도와 탐색 트리, 후보 비용표"><div class="export-actions"><a id="export-download" class="button primary" download="astar-path.png">PNG 다운로드</a><button class="button export-close">닫기</button></div></dialog>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

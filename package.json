@@ -1,0 +1,6 @@
+{
+  "name": "astar-navigation",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node tests/core.test.mjs", "start": "node server.mjs" }
+}

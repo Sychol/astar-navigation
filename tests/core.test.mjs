@@ -1,0 +1,31 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import {createGraph, crossesInterior, metrics, candidates, treeWindow, aStar} from '../dist/core.js';
+
+const data=JSON.parse(fs.readFileSync(new URL('../dist/coordinates.json',import.meta.url),'utf8'));
+const graph=createGraph(data);
+assert.equal(graph.edges.length,118,'Independently verified visibility edge count');
+assert.deepEqual(graph.adjacency.S,['O1','O2','O5','O6']);
+assert.deepEqual(graph.adjacency.O2,['O1','O3','O5','O9','O10','O12','S']);
+assert.deepEqual(graph.adjacency.O9,['O2','O3','O5','O8','O10','O11']);
+const square=[{x:0,y:0},{x:2,y:0},{x:2,y:2},{x:0,y:2}];
+assert.equal(crossesInterior({x:-1,y:1},{x:3,y:1},square),true,'Interior crossing blocked');
+assert.equal(crossesInterior({x:0,y:0},{x:2,y:0},square),false,'Boundary travel allowed');
+assert.equal(crossesInterior({x:-1,y:1},{x:1,y:3},square),false,'Vertex tangency allowed');
+assert.equal(crossesInterior({x:0,y:0},{x:2,y:2},square),true,'Polygon diagonals blocked');
+const routeA=metrics(graph,['S','O1','O5']),routeB=metrics(graph,['S','O2','O5']);
+assert.equal(routeA.h,routeB.h);assert.ok(routeA.g>routeB.g);
+assert.ok(Math.abs(metrics(graph,['S','O2']).g-60.41522986797286)<1e-9);
+assert.equal(candidates(graph,['S','O2'])[0].id,'O9');
+assert.ok(!candidates(graph,['S','O2']).some(c=>c.id==='S'));
+assert.deepEqual(treeWindow(['S']).levels,[null,0,1]);
+assert.deepEqual(treeWindow(['S','O2']).levels,[0,1,2]);
+assert.deepEqual(treeWindow(['S','O2','O12']),{parent:'O2',current:'O12',levels:[1,2,3]});
+const frames=aStar(graph),final=frames.at(-1);
+assert.deepEqual(final.current.path,['S','O2','O12','O16','O21','O32','G']);
+assert.ok(Math.abs(final.current.g-828.7903424225254)<1e-8,'Independent Dijkstra result');
+assert.equal(final.current.h,0);assert.equal(final.done,true);assert.equal(frames.length,18);
+assert.deepEqual(candidates(graph,final.current.path),[]);
+for(let i=1;i<frames.length;i++)assert.equal(frames[i].current.f,Math.min(...frames[i-1].open.map(c=>c.f)),'Global OPEN minimum');
+for(const edge of graph.edges){const ha=metrics(graph,[edge.a]).h,hb=metrics(graph,[edge.b]).h;assert.ok(ha<=edge.cost+hb+1e-9);assert.ok(hb<=edge.cost+ha+1e-9);}
+console.log('PASS: geometry boundaries, 118 edges, path-dependent g, three-level window, and A* global optimum (828.7903424225).');
